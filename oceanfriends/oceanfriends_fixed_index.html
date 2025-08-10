@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ocean Friends — Mouse Game (Start-Gated)</title>
+  <style>
+    :root{
+      --bg:#041624; --panel:#07243aee; --text:#eaf7ff; --accent:#6ee7ff; --good:#7ae582; --warn:#ffd166; --danger:#ff6b6b;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:radial-gradient(1200px 800px at 10% -20%, #0b2a4c, var(--bg));color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .wrap{display:grid;grid-template-rows:auto 1fr auto;min-height:100%}
+    header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;background:var(--panel);border-bottom:1px solid #0e3b60;backdrop-filter:blur(8px)}
+    header h1{font-size:18px;margin:0;letter-spacing:.4px}
+    .btn{background:#0a2a46;color:var(--text);border:1px solid #184f7a;border-radius:10px;padding:8px 12px;cursor:pointer}
+    .btn:hover{transform:translateY(-1px)}
+    #stage{position:relative;display:grid;place-items:center;padding:10px}
+    canvas{width:100%;height:auto;max-width:900px;border-radius:14px;background:linear-gradient(180deg,#063455,#011221);box-shadow:0 18px 40px #0008}
+    .hud{position:absolute;inset:0;pointer-events:none;display:grid;grid-template-rows:auto 1fr auto;max-width:900px;margin:0 auto}
+    .hud .top,.hud .bottom{display:flex;justify-content:space-between;gap:8px;padding:8px}
+    .chip{pointer-events:auto;background:#082a45cc;border:1px solid #164f7a;padding:6px 10px;border-radius:999px;font-variant-numeric:tabular-nums}
+    .score{color:var(--good)} .lives{color:#ffe08a} .level{color:#a0e8ff}
+    .panel{pointer-events:auto;background:#07243ae6;border:1px solid #15517d;border-radius:16px;padding:18px;text-align:center;width:min(92vw,560px);margin:auto;box-shadow:0 12px 40px #0008}
+    .panel h2{margin:0 0 8px}
+    .legend{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;opacity:.95}
+    .legend span{background:#0a2f4dcc;border:1px solid #184f7a;border-radius:999px;padding:4px 8px}
+    footer{color:#a9cbe3;text-align:center;font-size:12px;padding:10px 0 14px;opacity:.85}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>🐠 Ocean Friends — Mouse Game</h1>
+      <div style="display:flex;gap:8px">
+        <button id="pauseBtn" class="btn" disabled>Pause</button>
+        <button id="restartBtn" class="btn">Restart</button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <canvas id="canvas" width="900" height="600" aria-label="Ocean game canvas"></canvas>
+      <div class="hud" aria-live="polite">
+        <div class="top">
+          <div class="chip score">Bubbles: <span id="score">0</span></div>
+          <div class="chip level">Level: <span id="level">1</span></div>
+          <div class="chip lives">Hearts: <span id="lives">3</span></div>
+          <div class="chip">Best: <span id="best">0</span></div>
+        </div>
+        <div id="centerMsg" style="display:grid;place-items:center"></div>
+        <div class="bottom">
+          <div class="chip">Move with your <strong>mouse</strong>. Click to <strong>dash</strong> (cooldown).</div>
+          <div class="chip" id="cooldownChip">Dash ready</div>
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      Collect blue bubbles, avoid big predators; turtles give shields, belugas calm predators. Mouse only.
+    </footer>
+  </div>
+
+  <script>
+  (function(){
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const ui = {
+      score: document.getElementById('score'),
+      level: document.getElementById('level'),
+      lives: document.getElementById('lives'),
+      best: document.getElementById('best'),
+      pauseBtn: document.getElementById('pauseBtn'),
+      restartBtn: document.getElementById('restartBtn'),
+      centerMsg: document.getElementById('centerMsg'),
+      cooldownChip: document.getElementById('cooldownChip'),
+    };
+
+    // Responsive scaling that preserves world units
+    const world = { w: 900, h: 600 };
+    function resize() {
+      const aspect = world.w / world.h;
+      const maxW = Math.min(world.w, window.innerWidth - 20);
+      const w = Math.max(340, maxW);
+      const h = Math.round(w / aspect);
+      const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+      const scale = w / world.w;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+    }
+    window.addEventListener('resize', resize); resize();
+
+    // RNG & helpers
+    const RNG = (seed => () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296)(Date.now()>>>0);
+    const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+    const dist2 = (x1,y1,x2,y2)=>{const dx=x1-x2,dy=y1-y2;return dx*dx+dy*dy};
+
+    // Game state
+    const state = { t:0, playing:false, paused:false, score:0, level:1, lives:3, best: Number(localStorage.getItem('ocean_best')||0) };
+    ui.best.textContent = state.best;
+
+    // Player (Goldfish)
+    const player = { x: world.w*0.2, y:world.h*0.5, r:14, speed: 240, targetX: world.w*0.2, targetY:world.h*0.5, dash: {cooldown:0, cdMax:3, active:0, duration:0.18, power:520}, shield:0 };
+
+    // Entities
+    const bubbles=[], predators=[], helpers=[], sparkle=[];
+    let inks=[]; // keep separate for clarity
+
+    // Animation control
+    let rafId = null;
+    function stopLoop(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
+    function startLoop(){ if(rafId===null){ lastTime = performance.now(); rafId = requestAnimationFrame(loop); } }
+
+    // Input: mouse only (ignored while not playing)
+    let mouse = {x: player.x, y: player.y};
+    canvas.addEventListener('mousemove',(e)=>{
+      if(!state.playing) return;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = world.w / rect.width; const scaleY = world.h / rect.height;
+      mouse.x = (e.clientX - rect.left) * scaleX; mouse.y = (e.clientY - rect.top) * scaleY;
+      player.targetX = mouse.x; player.targetY = mouse.y;
+    });
+    canvas.addEventListener('mousedown',()=>{
+      if(state.paused||!state.playing) return;
+      if(player.dash.cooldown<=0){ player.dash.active = player.dash.duration; player.dash.cooldown = player.dash.cdMax; ui.cooldownChip.textContent = 'Dashing!'; }
+    });
+
+    ui.pauseBtn.addEventListener('click',()=>{
+      if(!state.playing) return;
+      state.paused=!state.paused;
+      ui.pauseBtn.textContent= state.paused?'Resume':'Pause';
+      if(state.paused){ stopLoop(); } else { startLoop(); }
+    });
+    ui.restartBtn.addEventListener('click',()=> showMenu());
+
+    // MENU / START
+    function showMenu(){
+      // Ensure nothing is running
+      state.playing = false;
+      state.paused = false;
+      stopLoop();
+      ui.pauseBtn.disabled = true;
+      // Clear entities so nothing animates behind
+      bubbles.length = predators.length = helpers.length = sparkle.length = 0;
+      inks = [];
+      const div=document.createElement('div'); div.className='panel'; div.innerHTML=`
+        <h2>Welcome to Ocean Friends!</h2>
+        <p>Move your <strong>goldfish</strong> with the mouse. Click to <strong>dash</strong>.</p>
+        <div class="legend">
+          <span>🟦 Collect Blue Bubbles</span>
+          <span>🦈 Shark & Hammerhead — avoid!</span>
+          <span>🐋 Killer Whale — avoid!</span>
+          <span>🦑 Squid — shoots ink</span>
+          <span>🐢 Turtle — shield</span>
+          <span>🐳 Beluga — calms predators</span>
+        </div>
+        <p style="margin-top:10px">Collect 10 bubbles to level up. Suitable for ages 8+.</p>
+        <button class="btn" id="startBtn">Start</button>
+      `; ui.centerMsg.innerHTML=''; ui.centerMsg.appendChild(div);
+      document.getElementById('startBtn').addEventListener('click', startGame, {once:true});
+    }
+
+    function startGame(){
+      // Reset state
+      state.playing=true; state.paused=false; state.score=0; state.level=1; state.lives=3;
+      ui.score.textContent='0'; ui.level.textContent='1'; ui.lives.textContent='3'; ui.centerMsg.innerHTML='';
+      ui.pauseBtn.disabled = false; ui.pauseBtn.textContent = 'Pause';
+      bubbles.length=predators.length=helpers.length=sparkle.length=0; inks=[];
+      player.x=world.w*0.2; player.y=world.h*0.5; player.targetX=player.x; player.targetY=player.y; player.shield=0; player.dash.cooldown=0; player.dash.active=0;
+      for(let i=0;i<8;i++) spawnBubble();
+      spawnPredator('shark'); spawnPredator('orca'); spawnPredator('squid');
+      startLoop();
+    }
+
+    function spawnBubble(){
+      const pad=24; const x = pad + RNG()*(world.w-pad*2); const y = pad + RNG()*(world.h-pad*2);
+      bubbles.push({x,y,r:9, tw:RNG()*Math.PI*2});
+    }
+    function spawnPredator(type){
+      const side=Math.floor(RNG()*4); let x,y; if(side===0){x=0;y=RNG()*world.h;} else if(side===1){x=world.w;y=RNG()*world.h;} else if(side===2){x=RNG()*world.w;y=0;} else {x=RNG()*world.w;y=world.h;}
+      const base = { shark:{r:18, speed:120, emoji:'🦈'}, orca:{r:20, speed:105, emoji:'🐋'}, hammer:{r:18, speed:150, emoji:'🦈'}, squid:{r:14, speed:95, emoji:'🦑'} }[type];
+      predators.push({type, x,y, r:base.r, speed:base.speed*(1+state.level*0.05), emoji:base.emoji, jitter:RNG()*1000, fire:0});
+    }
+    function spawnHelper(type){
+      const x= 40 + RNG()*(world.w-80); const y = 40 + RNG()*(world.h-80);
+      const base = { turtle:{r:16, emoji:'🐢'}, beluga:{r:18, emoji:'🐳'} }[type];
+      helpers.push({type, x,y, r:base.r, emoji:base.emoji, life:10});
+    }
+    function sparkleBurst(x,y,n=14){ for(let i=0;i<n;i++){ const a=RNG()*Math.PI*2, sp=30+RNG()*70; sparkle.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.9+RNG()*0.6}); } }
+
+    // Drawing helpers
+    function drawEmoji(x,y,emoji,size){ ctx.font = `${size}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(emoji, x, y+1); }
+    function drawFish(){ drawEmoji(player.x, player.y, '🐠', 28);
+      if(player.shield>0){ ctx.strokeStyle='#7ae582'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(player.x,player.y, player.r+6, 0, Math.PI*2); ctx.stroke(); } }
+
+    function update(dt){
+      // Guard: if not playing, do nothing (extra safety)
+      if(!state.playing || state.paused) return;
+
+      state.t += dt;
+      // Dash cooldown
+      if(player.dash.cooldown>0){ player.dash.cooldown = Math.max(0, player.dash.cooldown-dt); ui.cooldownChip.textContent = player.dash.cooldown>0 ? `Dash in ${player.dash.cooldown.toFixed(1)}s` : 'Dash ready'; }
+
+      // Move toward mouse (ease)
+      const toX = player.targetX - player.x; const toY = player.targetY - player.y; const mag = Math.hypot(toX,toY) || 1; let vx = (toX/mag) * player.speed; let vy=(toY/mag)*player.speed;
+      if(player.dash.active>0){ player.dash.active -= dt; vx*= (player.dash.power/player.speed); vy*=(player.dash.power/player.speed); }
+      player.x = clamp(player.x + vx*dt, 12, world.w-12); player.y = clamp(player.y + vy*dt, 12, world.h-12);
+      if(player.shield>0) player.shield -= dt;
+
+      // Sparkle particles
+      for(let i=sparkle.length-1;i>=0;i--){ const b=sparkle[i]; b.x+=b.vx*dt; b.y+=b.vy*dt; b.life -= dt*0.8; if(b.life<=0) sparkle.splice(i,1); }
+
+      // Bubble bob
+      for(const b of bubbles){ b.tw += dt*2; }
+
+      // Predators behavior
+      for(const e of predators){
+        if(e.type==='squid'){
+          const dx=player.x-e.x, dy=player.y-e.y; const d=Math.hypot(dx,dy)||1; const away = d<220 ? -1 : 1; e.x += (dx/d)*e.speed*dt*away*0.6; e.y += (dy/d)*e.speed*dt*away*0.6;
+          e.fire -= dt; if(e.fire<=0 && d<420){ e.fire = 2.6 - Math.min(1.2, state.level*0.1); const sp=130; inks.push({x:e.x,y:e.y,vx:(dx/d)*sp,vy:(dy/d)*sp, r:7, life:4}); }
+        } else if(e.type==='hammer'){
+          const dx=player.x-e.x, dy=player.y-e.y; const d=Math.hypot(dx,dy)||1; const n={x:dx/d,y:dy/d};
+          const burst = (Math.sin((state.t+e.jitter)*2)>0.6)?1.8:1; e.x += n.x*e.speed*dt*burst; e.y += n.y*e.speed*dt*burst;
+        } else {
+          const dx=player.x-e.x, dy=player.y-e.y; const d=Math.hypot(dx,dy)||1; const n={x:dx/d,y:dy/d};
+          const wob = {x:Math.sin((state.t+e.jitter)*1.7)*0.25, y:Math.cos((state.t+e.jitter)*1.9)*0.25};
+          e.x += (n.x*0.92 + wob.x*0.08) * e.speed * dt;
+          e.y += (n.y*0.92 + wob.y*0.08) * e.speed * dt;
+        }
+      }
+
+      // Ink projectiles
+      for(let i=inks.length-1;i>=0;i--){ const k=inks[i]; k.x+=k.vx*dt; k.y+=k.vy*dt; k.life-=dt; if(k.x<-10||k.x>world.w+10||k.y<-10||k.y>world.h+10||k.life<=0) inks.splice(i,1); }
+
+      // Helpers drift slightly
+      for(let i=helpers.length-1;i>=0;i--){ const h=helpers[i]; h.life-=dt; if(h.life<=0){ helpers.splice(i,1); continue; } h.x += Math.sin((state.t+i)*0.7)*8*dt; h.y += Math.cos((state.t+i)*0.9)*8*dt; }
+
+      // Collisions: bubbles (forgiving radius)
+      for(let i=bubbles.length-1;i>=0;i--){ const b=bubbles[i]; if(dist2(player.x,player.y,b.x,b.y) < (player.r+b.r+6)*(player.r+b.r+6)){ bubbles.splice(i,1); state.score++; ui.score.textContent=state.score; sparkleBurst(b.x,b.y,18); spawnBubble(); if(state.score>0 && state.score%10===0){ levelUp(); } } }
+
+      // Collisions: helpers
+      for(let i=helpers.length-1;i>=0;i--){ const h=helpers[i]; if(dist2(player.x,player.y,h.x,h.y) < (player.r+h.r+4)*(player.r+h.r+4)){
+          if(h.type==='turtle'){ player.shield = 6; }
+          if(h.type==='beluga'){ calmTimer = 3.5; }
+          sparkleBurst(h.x,h.y,22); helpers.splice(i,1);
+        } }
+
+      // Collisions: predators
+      for(let i=predators.length-1;i>=0;i--){ const e=predators[i];
+        if(dist2(player.x,player.y,e.x,e.y) < (player.r+e.r)*(player.r+e.r)){
+          if(player.shield>0){ sparkleBurst(player.x,player.y,24); player.shield=0;
+            const dx = e.x-player.x, dy=e.y-player.y; const d=Math.hypot(dx,dy)||1; e.x += (dx/d)*24; e.y += (dy/d)*24; }
+          else { state.lives--; ui.lives.textContent=state.lives; sparkleBurst(player.x,player.y,26); if(state.lives<=0){ return gameOver(); } player.shield=2.0; }
+        }
+      }
+
+      // Calm effect reduces enemy speed briefly
+      if(calmTimer>0){ calmTimer-=dt; for(const e of predators) e.speed *= 0.985; }
+
+      // Counts & spawns
+      while(bubbles.length<8) spawnBubble();
+      const desiredPreds = Math.min(3 + Math.floor(state.level*0.7), 24);
+      while(predators.length<desiredPreds){ const pick = ['shark','orca','hammer','squid'][Math.floor(RNG()*4)]; spawnPredator(pick); }
+      if(helpers.length<2 && RNG()<0.006) spawnHelper(RNG()<0.55?'turtle':'beluga');
+
+      // Best score
+      if(state.score>state.best){ state.best=state.score; ui.best.textContent=state.best; localStorage.setItem('ocean_best', String(state.best)); }
+    }
+
+    function levelUp(){ state.level++; ui.level.textContent=state.level; for(const e of predators) e.speed *= 1.04; if(state.level%2===0) spawnPredator('hammer'); }
+
+    let calmTimer=0;
+    function draw(){
+      ctx.clearRect(0,0,world.w,world.h);
+      // water grid
+      ctx.save(); ctx.globalAlpha=0.5; ctx.strokeStyle='#0e3a60'; ctx.lineWidth=1; for(let x=0;x<world.w;x+=30){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,world.h); ctx.stroke(); } for(let y=0;y<world.h;y+=30){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(world.w,y); ctx.stroke(); } ctx.restore();
+
+      for(const b of bubbles){ const bob = Math.sin(b.tw)*2; ctx.fillStyle='rgba(120,200,255,0.95)'; ctx.beginPath(); ctx.arc(b.x, b.y+bob, b.r, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.stroke(); }
+      for(const h of helpers){ drawEmoji(h.x,h.y,h.emoji, 26); }
+      for(const e of predators){ const symbol = (e.type==='hammer')? '🦈' : e.emoji; drawEmoji(e.x, e.y, symbol, 28); }
+      ctx.fillStyle='rgba(190,230,255,0.85)'; for(const s of sparkle){ ctx.fillRect(s.x, s.y, 2,2); }
+      drawFish();
+    }
+
+    let lastTime = performance.now();
+    function loop(now){
+      rafId = requestAnimationFrame(loop);
+      if(state.paused || !state.playing) return;
+      now = now || performance.now();
+      const dt = Math.min(1/30, (now-lastTime)/1000); lastTime=now;
+      update(dt); draw();
+    }
+
+    function gameOver(){
+      state.playing=false; state.paused=false; ui.pauseBtn.textContent='Pause'; ui.pauseBtn.disabled = true;
+      stopLoop();
+      const div=document.createElement('div'); div.className='panel'; div.innerHTML=`
+        <h2>Game Over</h2>
+        <p>Bubbles: <strong>${state.score}</strong> · Level: <strong>${state.level}</strong></p>
+        <div class="legend" style="margin:10px 0"><span>Tip: Turtles give shields!</span><span>Belugas calm predators.</span></div>
+        <button class="btn" id="againBtn">Play Again</button>
+      `; ui.centerMsg.innerHTML=''; ui.centerMsg.appendChild(div); document.getElementById('againBtn').addEventListener('click', startGame);
+    }
+
+    // Start at menu (NO auto-start; no background loop)
+    showMenu();
+  })();
+  </script>
+</body>
+</html>
