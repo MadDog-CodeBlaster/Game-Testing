@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dodge & Collect</title>
+  <style>
+    body { margin: 0; background: #111; color: white; font-family: sans-serif; text-align: center; }
+    canvas { background: #000; display: block; margin: 20px auto; }
+  </style>
+</head>
+<body>
+  <h1>Dodge & Collect</h1>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const player = { x: 400, y: 300, r: 10, speed: 4 };
+    const stars = [];
+    const enemies = [];
+    let score = 0;
+
+    function spawnStar() {
+      stars.push({ x: Math.random() * (canvas.width - 20) + 10, y: Math.random() * (canvas.height - 20) + 10, r: 5 });
+    }
+
+    function spawnEnemy() {
+      enemies.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, r: 8, speed: 2 });
+    }
+
+    for (let i = 0; i < 5; i++) spawnStar();
+    for (let i = 0; i < 3; i++) spawnEnemy();
+
+    const keys = {};
+    window.addEventListener('keydown', e => keys[e.key] = true);
+    window.addEventListener('keyup', e => keys[e.key] = false);
+
+    function update() {
+      if (keys['ArrowUp'] || keys['w']) player.y -= player.speed;
+      if (keys['ArrowDown'] || keys['s']) player.y += player.speed;
+      if (keys['ArrowLeft'] || keys['a']) player.x -= player.speed;
+      if (keys['ArrowRight'] || keys['d']) player.x += player.speed;
+
+      stars.forEach((star, i) => {
+        if (Math.hypot(player.x - star.x, player.y - star.y) < player.r + star.r) {
+          stars.splice(i, 1);
+          score++;
+          spawnStar();
+        }
+      });
+
+      enemies.forEach(enemy => {
+        const dx = player.x - enemy.x;
+        const dy = player.y - enemy.y;
+        const dist = Math.hypot(dx, dy);
+        enemy.x += (dx / dist) * enemy.speed;
+        enemy.y += (dy / dist) * enemy.speed;
+        if (dist < player.r + enemy.r) {
+          alert('Game Over! Score: ' + score);
+          document.location.reload();
+        }
+      });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'lime';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'yellow';
+      stars.forEach(star => {
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = 'red';
+      enemies.forEach(enemy => {
+        ctx.beginPath();
+        ctx.arc(enemy.x, enemy.y, enemy.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = 'white';
+      ctx.fillText('Score: ' + score, 10, 20);
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>
