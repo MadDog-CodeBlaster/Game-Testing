@@ -24,11 +24,9 @@
     function spawnStar() {
       stars.push({ x: Math.random() * (canvas.width - 20) + 10, y: Math.random() * (canvas.height - 20) + 10, r: 5 });
     }
-
     function spawnEnemy() {
       enemies.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, r: 8, speed: 2 });
     }
-
     for (let i = 0; i < 5; i++) spawnStar();
     for (let i = 0; i < 3; i++) spawnEnemy();
 
@@ -51,8 +49,7 @@
       });
 
       enemies.forEach(enemy => {
-        const dx = player.x - enemy.x;
-        const dy = player.y - enemy.y;
+        const dx = player.x - enemy.x, dy = player.y - enemy.y;
         const dist = Math.hypot(dx, dy);
         enemy.x += (dx / dist) * enemy.speed;
         enemy.y += (dy / dist) * enemy.speed;
@@ -88,12 +85,7 @@
       ctx.fillText('Score: ' + score, 10, 20);
     }
 
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
-
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
     loop();
   </script>
 </body>
